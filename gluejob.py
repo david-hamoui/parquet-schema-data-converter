@@ -1,24 +1,42 @@
 import pandas as pd
 import numpy as np
-import fastparquet
-import pyarrow
+import os
 
 
 def main(table_name, column_schema):
-    path = f"C:/Users/t.david.hamoui/parquet-schema-data-converter/s3/retail_orders/partition2/retail_orders.parquet"
-    
-    original_df = read_parquet(path, column_schema)
+    father_path = f"C:/Users/t.david.hamoui/parquet-schema-data-converter/s3/" + table_name
 
-    new_df = original_df.apply(convert_string_to_upper, axis=0)
+    global paths
+    paths = []
 
-    print(new_df)
+    iterate_through_all_files(father_path)
 
-def convert_string_to_upper(str):
-    pass
+    if not paths:
+        print("No parquet file found in: " + father_path)
 
-def read_parquet(table_name, column):
+    for path in paths:
+        original_df_customer_id = read_parquet(path)
+        new_df = original_df_customer_id.astype(column_schema)
+        print(new_df)
+
+def read_parquet(path):
     #Read Parquet and return dataframe pandas
-    return pd.read_parquet(table_name, columns=column)
+    return pd.read_parquet(path)
+
+def iterate_through_all_files(path):
+
+    for file in os.scandir(path):
+        if file.is_file() and os.path.splitext(file)[1] == ".parquet":
+            print("Parquet file found in: " + file.path)
+            paths.append(file.path)
+        else:
+            iterate_through_all_files(file.path)
 
 
-main(table_name='',column_schema=['customer_id'])
+parameter_dict = {
+    "customer_id": int
+}
+
+table_name = 'retail_orders'
+
+main(table_name=table_name,column_schema=parameter_dict)
