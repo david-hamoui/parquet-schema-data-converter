@@ -26,9 +26,10 @@ def read_parquet(path):
 def iterate_through_all_files(path):
 
     for file in os.scandir(path):
-        if file.is_file() and os.path.splitext(file)[1] == ".parquet":
-            print("Parquet file found in: " + file.path)
-            paths.append(file.path)
+        if file.is_file():
+            if os.path.splitext(file)[1] == ".parquet":
+                print("Parquet file found in: " + file.path)
+                paths.append(file.path)
         else:
             iterate_through_all_files(file.path)
 
