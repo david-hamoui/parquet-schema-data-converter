@@ -4,56 +4,41 @@ from awsglue.utils import getResolvedOptions
 from pyspark.context import SparkContext
 from awsglue.context import GlueContext
 from awsglue.job import Job
-import pandas as pd
 import boto3
+import pandas as pd
+from io import BytesIO
 
-def main(table_name, column_schema):
-    father_path = f"{table_name}"  #Substitute for new path when uploading to AWS
-
-    for folder in bucket:
-        pass
-
-    paths = []
-
-    iterate_through_all_files(father_path)
-
-    if not paths:
-        logger.info(f"No parquet file found in: {father_path}")
-
-    for path in paths:
-        original_df = read_parquet(path)
-        logger.info(f"\nOriginal df{paths.index(path)}: \n{original_df.dtypes}")
-        new_df = original_df.astype(column_schema)
-        logger.info(f"\n Modified df{paths.index(path)}: \n{new_df.dtypes}")
-
-def read_parquet(path):
-    #Read Parquet and return dataframe pandas
-    return pd.read_parquet(path)
-
-def iterate_through_all_files(path):
-    for file in os.scandir(path):
-        if file.is_file():
-            if os.path.splitext(file)[1] == ".parquet":
-                logger.info("Parquet file found in: " + file.path)
-                paths.append(file.path)
-        else:
-            iterate_through_all_files(file.path)
-
+def read_s3_files_into_dataframe(bucket_name, path):
+    logger.info(f"Reading s3 file from {bucket_name}, path {path}")
+    response = s3.get_object(Bucket=bucket_name,Key=path)
+    body = BytesIO(response['Body'].read())
+    df = pd.read_parquet(body)
+    return df
+    
+def put_parquet(converted_df,bucket_name,path):
+    converted_parquet = BytesIO(converted_df.to_parquet(compression='snappy'))
+    s3.put_object(Bucket=bucket_name,Key=path,Body=converted_parquet)
+    logger.info(f"Uploaded converted parquet into {bucket_name}, path {path}")
 
 ## @params: [JOB_NAME]
-env = getResolvedOptions(sys.argv, ['JOB_NAME', 'table', 'schema'])
+env = getResolvedOptions(sys.argv, ['JOB_NAME','bucket','schema','table_name'])
 
 sc = SparkContext()
 glueContext = GlueContext(sc)
 spark = glueContext.spark_session
 job = Job(glueContext)
-job.init(env['JOB_NAME'], env)  #Start gluejob
-
-s3 = boto3.resource('s3')
-bucket = s3.Bucket('specialized/')
+job.init(env['JOB_NAME'], env)
 
 logger = glueContext.get_logger()
+logger.info(f"***INITIALIZING GLUEJOB SCRIPT***     Parameters: Bucket = {env['bucket']}, Schema = {env['schema']}, Table name = {env['table_name']}")
 
-main(env["table"],env["schema"])
+s3 = boto3.client('s3')
+s3_objects = s3.list_objects_v2(Bucket=env['bucket'],Prefix=f'specialized/{env['table_name']}/')
 
-job.commit()  #Finish gluejob
+for item in s3_objects['Contents']:
+    df = read_s3_files_into_dataframe(env['bucket'],item['Key'])
+    converted_df = df.astype(env['schema'])
+    put_parquet(converted_df, env['bucket'], item['Key'])
+
+logger.info("***FINISHED GLUEJOB SCRIPT***")
+job.commit()
