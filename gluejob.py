@@ -1,61 +1,48 @@
+import sys
+from awsglue.transforms import *
+from awsglue.utils import getResolvedOptions
+from pyspark.context import SparkContext
+from awsglue.context import GlueContext
+from awsglue.job import Job
+import boto3
 import pandas as pd
-import numpy as np
-import os
+from io import BytesIO
 
+def listing_parquets_and_converting_schemas():
+    s3_objects = s3.list_objects_v2(Bucket=env['bucket'],Prefix=f"specialized/{env['table_name']}/")
 
-def main(table_name, column_schema):
-    father_path = f"{os.getcwd()}/s3/{table_name}"  #Substitute for new path when uploading to AWS
+    for item in s3_objects['Contents']:
+        df = read_s3_files_into_dataframe(env['bucket'],item['Key'])
+        converted_df = df.astype(env['schema'])
+        put_parquet(converted_df, env['bucket'], item['Key'])
 
-    global paths
-    paths = []
+def read_s3_files_into_dataframe(bucket_name, path):
+    logger.info(f"Reading s3 file from {bucket_name}, path {path}")
+    response = s3.get_object(Bucket=bucket_name,Key=path)
+    body = BytesIO(response['Body'].read())
+    df = pd.read_parquet(body)
+    return df
+    
+def put_parquet(converted_df,bucket_name,path):
+    converted_parquet = BytesIO(converted_df.to_parquet(compression='snappy'))
+    s3.put_object(Bucket=bucket_name,Key=path,Body=converted_parquet)
+    logger.info(f"Uploaded converted parquet into {bucket_name}, path {path}")
 
-    iterate_through_all_files(father_path)
+## @params: [JOB_NAME]
+env = getResolvedOptions(sys.argv, ['JOB_NAME','bucket','schema','table_name'])
 
-    if not paths:
-        Logger.info(f"No parquet file found in: {father_path}")
+sc = SparkContext()
+glueContext = GlueContext(sc)
+spark = glueContext.spark_session
+job = Job(glueContext)
+job.init(env['JOB_NAME'], env)
 
-    for path in paths:
-        original_df = read_parquet(path)
-        Logger.info(f"\nOriginal df{paths.index(path)}: \n{original_df.dtypes}")
-        new_df = original_df.astype(column_schema)
-        Logger.info(f"\n Modified df{paths.index(path)}: \n{new_df.dtypes}")
+logger = glueContext.get_logger()
+logger.info(f"***INITIALIZING GLUEJOB SCRIPT***     Parameters: Bucket = {env['bucket']}, Schema = {env['schema']}, Table name = {env['table_name']}")
 
-def read_parquet(path):
-    #Read Parquet and return dataframe pandas
-    return pd.read_parquet(path)
+s3 = boto3.client('s3')
 
-def iterate_through_all_files(path):
-    for file in os.scandir(path):
-        if file.is_file():
-            if os.path.splitext(file)[1] == ".parquet":
-                Logger.info("Parquet file found in: " + file.path)
-                paths.append(file.path)
-        else:
-            iterate_through_all_files(file.path)
+listing_parquets_and_converting_schemas()
 
-
-class Logger:
-    def info(str):
-        print(str)
-
-
-parameter_dict = {
-    "id": "string[python]",
-    "customer_id": "string[python]",
-    "agreement": "string[python]",
-    "status": "string[python]",
-    "checkout_order_id": "string[python]",
-    "charge_id": "string[python]",
-    "number": "string[python]",
-    "checkout_order_xml": "string[python]",
-    "created_at": "object",
-    "updated_at": "string[python]",
-    "generic_attributes": "string[python]",
-    "antifraud_id": "string[python]"
-}
-
-table_name = 'retail_orders'
-
-env = {"table": table_name, "schema": parameter_dict}
-
-main(env["table"],env["schema"])
+logger.info("***FINISHED GLUEJOB SCRIPT***")
+job.commit()
